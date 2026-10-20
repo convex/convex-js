@@ -750,19 +750,31 @@ export type SystemFieldValidators<TableName extends string> = {
 };
 
 /**
- * Add the system field validators to an object validator, leaving any other
- * validator untouched.
+ * Add the system field validators to every object validator in a document
+ * validator, including objects in nested unions.
  */
 type WithSystemFieldValidators<
   TableName extends string,
   DocumentType extends Validator<any, any, any>,
-> =
-  DocumentType extends VObject<infer Type, infer Fields, any, any>
+> = 0 extends 1 & DocumentType
+  ? DocumentType
+  : DocumentType extends VObject<infer Type, infer Fields, any, any>
     ? VObject<
         Expand<IdField<TableName> & SystemFields & Type>,
         Expand<SystemFieldValidators<TableName> & Fields>
       >
-    : DocumentType;
+    : DocumentType extends VUnion<any, infer Members, any, any>
+      ? Validator<any, "required", any>[] extends Members
+        ? DocumentType
+        : {
+              [Index in keyof Members]: WithSystemFieldValidators<
+                TableName,
+                Members[Index]
+              >;
+            } extends infer NewMembers extends Validator<any, "required", any>[]
+          ? VUnion<NewMembers[number]["type"], NewMembers>
+          : never
+      : DocumentType;
 
 /**
  * The validator for whole documents of a table: the table's own validator with
@@ -776,20 +788,7 @@ type WithSystemFieldValidators<
 export type DocValidator<
   TableName extends string,
   DocumentType extends Validator<any, any, any>,
-> =
-  DocumentType extends VUnion<any, infer Members, any, any>
-    ? {
-        [Index in keyof Members]: WithSystemFieldValidators<
-          TableName,
-          Members[Index]
-        >;
-      } extends infer NewMembers extends Validator<any, "required", any>[]
-      ? VUnion<
-          WithSystemFieldValidators<TableName, Members[number]>["type"],
-          NewMembers
-        >
-      : never
-    : WithSystemFieldValidators<TableName, DocumentType>;
+> = WithSystemFieldValidators<TableName, DocumentType>;
 
 function addSystemFields(
   tableName: string,
@@ -847,11 +846,12 @@ export function docValidator<
 >(
   tableName: TableName,
   table: Table,
-): DocValidator<TableName, Table["validator"]> {
-  return addSystemFields(tableName, table.validator) as DocValidator<
-    TableName,
-    Table["validator"]
-  >;
+): DocValidator<TableName, Table["validator"]>;
+export function docValidator(
+  tableName: string,
+  table: TableDefinition,
+): GenericValidator {
+  return addSystemFields(tableName, table.validator);
 }
 
 /**
@@ -923,8 +923,9 @@ export class SchemaDefinition<
    */
   doc<TableName extends keyof Schema & string>(
     tableName: TableName,
-  ): DocValidator<TableName, Schema[TableName]["validator"]> {
-    return docValidator(tableName, tableInSchema(this, tableName));
+  ): DocValidator<TableName, Schema[TableName]["validator"]>;
+  doc(tableName: keyof Schema & string): GenericValidator {
+    return addSystemFields(tableName, tableInSchema(this, tableName).validator);
   }
 
   /**
