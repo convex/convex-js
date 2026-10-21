@@ -360,7 +360,6 @@ async function* codegenDynamicApiObjects(
   yield `
     import type {
       ApiFromModules,
-      FilterApi,
       FunctionReference,
     } from "convex/server";
 
@@ -373,10 +372,21 @@ async function* codegenDynamicApiObjects(
   }
   yield `}>;`;
   yield `
+    type ByVisibility<API, V extends string> = {
+      [K in keyof API as API[K] extends FunctionReference<any, V, any, any>
+        ? K
+        : API[K] extends FunctionReference<any, any, any, any>
+          ? never
+          : ByVisibility<API[K], V> extends Record<string, never>
+            ? never
+            : K]: API[K] extends FunctionReference<any, V, any, any>
+        ? API[K]
+        : ByVisibility<API[K], V>;
+    };
     ${apiComment("api", "public")}
-    export declare const api: FilterApi<typeof fullApi, FunctionReference<any, "public">>;
+    export declare const api: ByVisibility<typeof fullApi, "public">;
     ${apiComment("internal", "internal")}
-    export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, "internal">>;
+    export declare const internal: ByVisibility<typeof fullApi, "internal">;
   `;
 }
 
@@ -396,7 +406,6 @@ async function* codegenDynamicApiObjectsTS(
   yield `
     import type {
       ApiFromModules,
-      FilterApi,
       FunctionReference,
     } from "convex/server";
     import { anyApi, componentsGeneric } from "convex/server";
@@ -410,10 +419,21 @@ async function* codegenDynamicApiObjectsTS(
   }
   yield `}> = anyApi as any;`;
   yield `
+    type ByVisibility<API, V extends string> = {
+      [K in keyof API as API[K] extends FunctionReference<any, V, any, any>
+        ? K
+        : API[K] extends FunctionReference<any, any, any, any>
+          ? never
+          : ByVisibility<API[K], V> extends Record<string, never>
+            ? never
+            : K]: API[K] extends FunctionReference<any, V, any, any>
+        ? API[K]
+        : ByVisibility<API[K], V>;
+    };
     ${apiComment("api", "public")}
-    export const api: FilterApi<typeof fullApi, FunctionReference<any, "public">> = anyApi as any;
+    export const api: ByVisibility<typeof fullApi, "public"> = anyApi as any;
     ${apiComment("internal", "internal")}
-    export const internal: FilterApi<typeof fullApi, FunctionReference<any, "internal">> = anyApi as any;
+    export const internal: ByVisibility<typeof fullApi, "internal"> = anyApi as any;
   `;
 }
 
