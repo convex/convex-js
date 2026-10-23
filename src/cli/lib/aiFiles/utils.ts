@@ -72,10 +72,24 @@ export type InjectResult = {
 export const iife = <T>(fn: () => T): T => fn();
 
 /**
+ * Collapse all whitespace runs to single spaces for comparison purposes.
+ * Formatter-only changes (line wrapping, indentation, blank lines) inside
+ * a managed section must not count as content changes; see
+ * https://github.com/convex/convex-js/issues/201.
+ */
+export function normalizeSectionWhitespace(section: string): string {
+  return section.replace(/\s+/g, " ").trim();
+}
+
+/**
  * Inject a managed section into a file. If the file already contains the
  * markers, the section between them is replaced. Otherwise the section is
  * appended (or the file is created). Only writes when content actually
  * changes.
+ *
+ * A section that differs from the template only in whitespace and line
+ * breaks is left alone, so formatters (e.g. Prettier `proseWrap: "always"`)
+ * and the CLI can coexist. Genuine content changes are still replaced.
  */
 export async function injectManagedSection(
   opts: ManagedSectionTarget & { section: string },
@@ -88,12 +102,23 @@ export async function injectManagedSection(
   const endIdx = existing.indexOf(endMarker);
 
   const updated = iife(() => {
-    if (startIdx !== -1 && endIdx !== -1)
+    if (startIdx !== -1 && endIdx !== -1) {
+      const currentSection = existing.slice(
+        startIdx,
+        endIdx + endMarker.length,
+      );
+      if (
+        normalizeSectionWhitespace(currentSection) ===
+        normalizeSectionWhitespace(section)
+      ) {
+        return existing;
+      }
       return (
         existing.slice(0, startIdx) +
         section +
         existing.slice(endIdx + endMarker.length)
       );
+    }
     if (existing.length > 0)
       return existing.trimEnd() + "\n\n" + section + "\n";
 
