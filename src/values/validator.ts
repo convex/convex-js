@@ -18,6 +18,7 @@ import {
   VString,
   VUnion,
   Validator,
+  type ValidatorJSON,
 } from "./validators.js";
 
 /**
@@ -69,6 +70,21 @@ export type AsObjectValidator<
     : V extends PropertyValidators
       ? Validator<ObjectType<V>>
       : never;
+
+/**
+ * Return the JSON representation of a Convex validator.
+ *
+ * This is useful for schema introspection, form generation, and other tooling
+ * that needs the complete validator shape rather than only its `kind`.
+ *
+ * @param validator - The validator to serialize.
+ * @returns The validator's JSON representation.
+ *
+ * @public
+ */
+export function validatorToJson(validator: GenericValidator): ValidatorJSON {
+  return validator.json;
+}
 
 /**
  * The validator builder.
