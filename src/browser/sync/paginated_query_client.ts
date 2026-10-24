@@ -65,6 +65,7 @@ type AnyPaginatedQueryResult = PaginatedQueryResult<Value>;
 
 export type PaginatedQueryModification =
   | { kind: "Updated"; result: AnyPaginatedQueryResult | undefined }
+  | { kind: "Failed"; error: Error }
   | { kind: "Removed" };
 
 export type ExtendedTransition = Transition & {
@@ -184,6 +185,16 @@ export class PaginatedQueryClient {
       return undefined;
     }
 
+    // A pending split page is not active yet, so its rows stay out of the
+    // result, but its error must still surface: this read throws if it failed.
+    for (const splitKeys of paginatedQuery.ongoingSplits.values()) {
+      for (const splitKey of splitKeys) {
+        this.client.localQueryResultByToken(
+          paginatedQuery.pageKeyToQuery.get(splitKey)!.queryToken,
+        );
+      }
+    }
+
     const activePages = this.activePageQueryTokens(paginatedQuery);
     if (activePages.length === 0) {
       return {
@@ -245,24 +256,24 @@ export class PaginatedQueryClient {
     const changedBaseTokens = transition.queries.map((q) => q.token);
     const changed = this.queriesContainingTokens(changedBaseTokens);
 
-    let paginatedQueries: Array<{
-      token: PaginatedQueryToken;
-      modification: PaginatedQueryModification;
-    }> = [];
-
-    if (changed.length > 0) {
-      this.processPaginatedQuerySplits(changed, (token) =>
-        this.client.localQueryResultByToken(token),
-      );
-
-      paginatedQueries = changed.map((token) => ({
-        token,
-        modification: {
-          kind: "Updated" as const,
+    // Each paginated query is processed on its own, so a failed page fails only
+    // its own query and the rest of the transition is still delivered.
+    const paginatedQueries = changed.map((token) => {
+      let modification: PaginatedQueryModification;
+      try {
+        this.processPaginatedQuerySplits([token], (pageToken) =>
+          this.client.localQueryResultByToken(pageToken),
+        );
+        modification = {
+          kind: "Updated",
           result: this.localQueryResultByToken(token),
-        },
-      }));
-    }
+        };
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        modification = { kind: "Failed", error };
+      }
+      return { token, modification };
+    });
 
     const extendedTransition: ExtendedTransition = {
       ...transition,
