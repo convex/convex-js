@@ -24,6 +24,12 @@ import {
   OptimisticUpdate,
 } from "./optimistic_updates.js";
 import {
+  isWriteConflictRetryableResult,
+  sleepForWriteConflictRetry,
+  validateWriteConflictRetryOptions,
+  WriteConflictRetryOptions,
+} from "../../common/write_conflict_retry.js";
+import {
   OptimisticQueryResults,
   QueryResultsMap,
 } from "./optimistic_updates_impl.js";
@@ -216,7 +222,7 @@ export interface SubscribeOptions {
  *
  * @public
  */
-export interface MutationOptions {
+export interface MutationOptions extends WriteConflictRetryOptions {
   /**
    * An optimistic update to apply along with this mutation.
    *
@@ -902,13 +908,29 @@ export class BaseConvexClient {
     options?: MutationOptions,
     componentPath?: string,
   ): Promise<FunctionResult> {
-    const { mutationPromise } = this.enqueueMutation(
-      udfPath,
-      args,
-      options,
-      componentPath,
-    );
-    return mutationPromise;
+    const writeConflictRetryOptions =
+      validateWriteConflictRetryOptions(options);
+    let retriesRemaining = writeConflictRetryOptions.maxWriteConflictRetries;
+    while (true) {
+      const { mutationPromise } = this.enqueueMutation(
+        udfPath,
+        args,
+        options,
+        componentPath,
+      );
+      const result = await mutationPromise;
+      if (
+        retriesRemaining <= 0 ||
+        !isWriteConflictRetryableResult(result) ||
+        this.webSocketManager.socketState() === "terminated"
+      ) {
+        return result;
+      }
+      retriesRemaining -= 1;
+      await sleepForWriteConflictRetry(
+        writeConflictRetryOptions.writeConflictRetryDelayMs,
+      );
+    }
   }
 
   /**

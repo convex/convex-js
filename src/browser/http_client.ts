@@ -24,6 +24,12 @@ import {
   FunctionArgs,
   UserIdentityAttributes,
 } from "../server/index.js";
+import {
+  retryOnWriteConflict,
+  validateWriteConflictRetryOptions,
+  ValidatedWriteConflictRetryOptions,
+  WriteConflictRetryOptions,
+} from "../common/write_conflict_retry.js";
 
 export const STATUS_CODE_OK = 200;
 export const STATUS_CODE_BAD_REQUEST = 400;
@@ -38,14 +44,14 @@ export function setFetch(f: typeof globalThis.fetch) {
   specifiedFetch = f;
 }
 
-export type HttpMutationOptions = {
+export type HttpMutationOptions = WriteConflictRetryOptions & {
   /**
    * Skip the default queue of mutations and run this immediately.
    *
    * This allows the same HttpConvexClient to be used to request multiple
    * mutations in parallel, something not possible with WebSocket-based clients.
    */
-  skipQueue: boolean;
+  skipQueue?: boolean | undefined;
 };
 
 /**
@@ -73,6 +79,7 @@ export class ConvexHttpClient {
       | FunctionReference<"mutation">
       | FunctionReference_future<"mutation">;
     args: FunctionArgs<any>;
+    writeConflictRetryOptions: ValidatedWriteConflictRetryOptions;
     resolve: (value: any) => void;
     reject: (error: any) => void;
   }> = [];
@@ -361,6 +368,21 @@ export class ConvexHttpClient {
   >(
     mutation: Mutation,
     mutationArgs: FunctionArgs<Mutation>,
+    writeConflictRetryOptions: ValidatedWriteConflictRetryOptions,
+  ): Promise<FunctionReturnType<Mutation>> {
+    return await retryOnWriteConflict(
+      () => this.mutationInnerOnce(mutation, mutationArgs),
+      writeConflictRetryOptions,
+    );
+  }
+
+  private async mutationInnerOnce<
+    Mutation extends
+      | FunctionReference<"mutation">
+      | FunctionReference_future<"mutation">,
+  >(
+    mutation: Mutation,
+    mutationArgs: FunctionArgs<Mutation>,
   ): Promise<FunctionReturnType<Mutation>> {
     const name = getFunctionName(mutation);
     const body = JSON.stringify({
@@ -416,9 +438,14 @@ export class ConvexHttpClient {
 
     this.isProcessingQueue = true;
     while (this.mutationQueue.length > 0) {
-      const { mutation, args, resolve, reject } = this.mutationQueue.shift()!;
+      const { mutation, args, writeConflictRetryOptions, resolve, reject } =
+        this.mutationQueue.shift()!;
       try {
-        const result = await this.mutationInner(mutation, args);
+        const result = await this.mutationInner(
+          mutation,
+          args,
+          writeConflictRetryOptions,
+        );
         resolve(result);
       } catch (error) {
         reject(error);
@@ -434,9 +461,16 @@ export class ConvexHttpClient {
   >(
     mutation: Mutation,
     args: FunctionArgs<Mutation>,
+    writeConflictRetryOptions: ValidatedWriteConflictRetryOptions,
   ): Promise<FunctionReturnType<Mutation>> {
     return new Promise((resolve, reject) => {
-      this.mutationQueue.push({ mutation, args, resolve, reject });
+      this.mutationQueue.push({
+        mutation,
+        args,
+        writeConflictRetryOptions,
+        resolve,
+        reject,
+      });
       void this.processMutationQueue();
     });
   }
@@ -461,11 +495,21 @@ export class ConvexHttpClient {
     const [fnArgs, options] = args;
     const mutationArgs = parseArgs(fnArgs);
     const queued = !options?.skipQueue;
+    const writeConflictRetryOptions =
+      validateWriteConflictRetryOptions(options);
 
     if (queued) {
-      return await this.enqueueMutation(mutation, mutationArgs);
+      return await this.enqueueMutation(
+        mutation,
+        mutationArgs,
+        writeConflictRetryOptions,
+      );
     } else {
-      return await this.mutationInner(mutation, mutationArgs);
+      return await this.mutationInner(
+        mutation,
+        mutationArgs,
+        writeConflictRetryOptions,
+      );
     }
   }
 
