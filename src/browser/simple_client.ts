@@ -308,13 +308,11 @@ export class ConvexClient {
     };
     this.listeners.add(queryInfo);
 
-    // If the callback is registered for a query with a result immediately available
-    // schedule a fake transition to call the callback soon instead of waiting for
-    // a new server update (which could take seconds or days).
-    if (
-      !!this.paginatedClient.localQueryResultByToken(paginatedQueryToken) &&
-      this.callNewListenersWithCurrentValuesTimer === undefined
-    ) {
+    // A paginated query always has a result to report, at least a loading one,
+    // so schedule a fake transition to call the callback soon instead of waiting
+    // for a new server update. Reading the result here would throw at the caller
+    // if the query already failed; the transition delivers that to onError.
+    if (this.callNewListenersWithCurrentValuesTimer === undefined) {
       this.callNewListenersWithCurrentValuesTimer = setTimeout(
         () => this.callNewListenersWithCurrentValues(),
         0,
@@ -448,11 +446,11 @@ export class ConvexClient {
       const { callback, queryToken, onError, hasEverRun } = queryInfo;
       const isPaginatedQuery = serializedQueryTokenIsPaginated(queryToken);
 
-      // What does it mean to have a paginated query result ready? I think it's
-      // always going to fire immediately.
-      const hasResultReady = isPaginatedQuery
-        ? !!this.paginatedClient.localQueryResultByToken(queryToken)
-        : this.client.hasLocalQueryResultByToken(queryToken);
+      // A subscribed paginated query always has a result to report: a page,
+      // a loading state, or an error. Reading it here would throw for a failed
+      // page outside the try below and stop every other listener.
+      const hasResultReady =
+        isPaginatedQuery || this.client.hasLocalQueryResultByToken(queryToken);
 
       if (
         updatedQueries.includes(queryToken) ||
