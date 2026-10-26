@@ -6,6 +6,12 @@ import { jwtDecode } from "../../vendor/jwt-decode/index.js";
 // setTimout uses 32 bit integer, so it can only
 // schedule about 24 days in the future.
 const MAXIMUM_REFRESH_DELAY = 20 * 24 * 60 * 60 * 1000; // 20 days
+// After a failed refetch, the longest wait before trying again while the
+// current token is still valid.
+const MAXIMUM_REFETCH_RETRY_DELAY = 10 * 1000;
+// Retry a failed refetch only while the current token has at least this long
+// left; closer to expiry, give up and clear auth.
+const MINIMUM_REFETCH_RETRY_REMAINING_LIFETIME = 2 * 1000;
 
 const MAX_TOKEN_CONFIRMATION_ATTEMPTS = 2;
 
@@ -358,11 +364,30 @@ export class AuthenticationManager {
         });
       }
     } else {
-      this._logVerbose("refetching token failed");
-      if (this.syncState.hasAuth()) {
-        this.clearAuth();
+      const retryDelay = this.refetchRetryDelay();
+      if (retryDelay !== null) {
+        // A refetch runs ahead of expiry, so the token the server holds is
+        // still valid. Clearing auth now would re-run every query without an
+        // identity, so keep it and try again before it expires.
+        this._logVerbose(
+          `refetching token failed, keeping the current token and retrying in ${retryDelay}ms`,
+        );
+        const refetchTokenTimeoutId = setTimeout(() => {
+          this._logVerbose("retrying token refetch");
+          void this.refetchToken();
+        }, retryDelay);
+        this.setAuthState({
+          state: "waitingForScheduledRefetch",
+          refetchTokenTimeoutId,
+          config: this.authState.config,
+        });
+      } else {
+        this._logVerbose("refetching token failed");
+        if (this.syncState.hasAuth()) {
+          this.clearAuth();
+        }
+        this.setAndReportAuthFailed(this.authState.config.onAuthChange);
       }
-      this.setAndReportAuthFailed(this.authState.config.onAuthChange);
     }
     // Restart in case this refetch was triggered via schedule during
     // a reauthentication attempt.
@@ -370,6 +395,26 @@ export class AuthenticationManager {
       "restarting WS after auth token fetch (if currently stopped)",
     );
     this.tryRestartSocket();
+  }
+
+  // How long to wait before retrying a failed refetch, or `null` when the
+  // current token is missing or too close to expiry to keep. Uses the client's
+  // clock: if it runs behind, the server rejects the token first, and
+  // `tryToReauthenticate` takes over.
+  private refetchRetryDelay(): number | null {
+    const token = this.syncState.getAuth()?.value;
+    if (token === undefined) {
+      return null;
+    }
+    const { exp } = (this.decodeToken(token) ?? {}) as { exp?: number };
+    if (!exp) {
+      return null;
+    }
+    const remainingLifetime = exp * 1000 - Date.now();
+    if (remainingLifetime < MINIMUM_REFETCH_RETRY_REMAINING_LIFETIME) {
+      return null;
+    }
+    return Math.min(remainingLifetime / 2, MAXIMUM_REFETCH_RETRY_DELAY);
   }
 
   private scheduleTokenRefetch(token: string, clientClockSkewMs?: number) {
