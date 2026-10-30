@@ -233,7 +233,7 @@ export type StateVersion = {
 };
 type EncodedStateVersion = Omit<StateVersion, "ts"> & { ts: EncodedTS };
 
-type StateModification =
+export type StateModification =
   | {
       type: "QueryUpdated";
       queryId: QueryId;

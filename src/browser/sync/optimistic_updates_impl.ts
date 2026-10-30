@@ -141,7 +141,7 @@ type OptimisticUpdateAndId = {
   mutationId: RequestId;
 };
 
-type Query = {
+export type Query = {
   // undefined means the query was set to be loading (undefined) in an optimistic update.
   // Note that we can also have queries not present in the QueryResultMap
   // at all because they are still loading from the server and have no optimistic update
@@ -194,6 +194,33 @@ export class OptimisticQueryResults {
       }
     }
 
+    return changedQueries;
+  }
+
+  hasOptimisticUpdates(): boolean {
+    return this.optimisticUpdates.length > 0;
+  }
+
+  /**
+   * Replace the results of the given queries, `undefined` removing one.
+   * Only valid while no optimistic update is pending: the other results must
+   * already equal the server's.
+   */
+  ingestQueryResultChangesFromServer(
+    changes: Map<QueryToken, Query | undefined>,
+  ): ChangedQueries {
+    const changedQueries: ChangedQueries = [];
+    for (const [queryToken, query] of changes) {
+      if (query === undefined) {
+        this.queryResults.delete(queryToken);
+        continue;
+      }
+      const oldQuery = this.queryResults.get(queryToken);
+      this.queryResults.set(queryToken, query);
+      if (oldQuery === undefined || oldQuery.result !== query.result) {
+        changedQueries.push(queryToken);
+      }
+    }
     return changedQueries;
   }
 
