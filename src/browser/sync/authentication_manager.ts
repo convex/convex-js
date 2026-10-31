@@ -183,6 +183,9 @@ export class AuthenticationManager {
     }
     this._logVerbose("resuming WS after auth token fetch");
     this.resumeSocket();
+    // A reauthentication this config superseded may have stopped the socket and
+    // returned without restarting it; resume() leaves a stopped socket stopped.
+    this.tryRestartSocket();
   }
 
   onTransition(serverMessage: Transition) {
