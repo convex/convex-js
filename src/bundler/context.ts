@@ -154,7 +154,7 @@ class OneoffContextImpl {
 }
 
 /**
- * Install a SIGINT handler that gracefully exits via ctx.flushAndExit.
+ * Install SIGINT/SIGTERM handlers that gracefully exit via ctx.flushAndExit.
  *
  * `bun run` and `npm run` can deliver a duplicate SIGINT to the child
  * process immediately while the first handler is still starting cleanup:
@@ -169,21 +169,24 @@ class OneoffContextImpl {
 export function installSigintHandler(ctx: OneoffCtx) {
   const DUPLICATE_GRACE_MS = 500;
   let cleanupStartTime: number | null = null;
-  process.on("SIGINT", async () => {
+  const handleSignal = async (signal: "SIGINT" | "SIGTERM") => {
+    const exitCode = signal === "SIGINT" ? 130 : 143;
     if (cleanupStartTime !== null) {
       if (Date.now() - cleanupStartTime < DUPLICATE_GRACE_MS) {
         logVerbose(
-          "Received SIGINT during cleanup, ignoring duplicate signal...",
+          `Received ${signal} during cleanup, ignoring duplicate signal...`,
         );
         return;
       }
-      logVerbose("Received SIGINT during cleanup, exiting immediately...");
-      process.exit(130);
+      logVerbose(`Received ${signal} during cleanup, exiting immediately...`);
+      process.exit(exitCode);
     }
     cleanupStartTime = Date.now();
-    logVerbose("Received SIGINT, cleaning up...");
-    await ctx.flushAndExit(130);
-  });
+    logVerbose(`Received ${signal}, cleaning up...`);
+    await ctx.flushAndExit(exitCode);
+  };
+  process.on("SIGINT", () => handleSignal("SIGINT"));
+  process.on("SIGTERM", () => handleSignal("SIGTERM"));
 }
 
 export const oneoffContext: (args: {
