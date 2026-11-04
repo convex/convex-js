@@ -268,6 +268,13 @@ export function usePaginatedQueryInternal<
     setState(currState);
   }
   const convexClient = useConvex();
+  if (convexClient === undefined) {
+    throw new Error(
+      "Could not find Convex client! `usePaginatedQuery` must be used in the React component " +
+        "tree under `ConvexProvider`. Did you forget it? " +
+        "See https://docs.convex.dev/quick-start#set-up-convex-in-your-react-app",
+    );
+  }
   const logger = convexClient.logger;
 
   const resultsObject = useQueries(currState.queries);
