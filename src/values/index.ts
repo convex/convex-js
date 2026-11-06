@@ -13,7 +13,7 @@ export type {
   Value,
   NumericValue,
 } from "./value.js";
-export { v, asObjectValidator } from "./validator.js";
+export { v, asObjectValidator, validatorToJson } from "./validator.js";
 export type {
   AsObjectValidator,
   GenericValidator,
