@@ -78,7 +78,7 @@ export const deploymentCreate = new Command("create")
   )
   .option(
     "--expiration <value>",
-    'When the deployment expires (e.g. "none", "in 7 days", "2026-04-01T00:00:00Z", or a UNIX timestamp in seconds or milliseconds)',
+    'When the deployment expires (e.g. "none", "in 1 day", "2026-04-01T00:00:00Z", or a UNIX timestamp in seconds or milliseconds)',
   )
   .addOption(new Option("--expiry <value>").hideHelp())
   .addOption(new Option("--expires <value>").hideHelp())
