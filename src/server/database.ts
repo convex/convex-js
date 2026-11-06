@@ -266,7 +266,7 @@ export interface GenericDatabaseWriter<
    *
    * @param table - The name of the table the document is in.
    * @param id - The {@link values.GenericId} of the document to patch.
-   * @param value - The partial document to merge into the existing document.
+   * @param value - The {@link PatchValue} to merge into the existing document.
    */
   patch<TableName extends TableNamesInDataModel<DataModel>>(
     table: TableName,
@@ -288,7 +288,7 @@ export interface GenericDatabaseWriter<
    * in new code.
    *
    * @param id - The {@link values.GenericId} of the document to patch.
-   * @param value - The partial document to merge into the existing document.
+   * @param value - The {@link PatchValue} to merge into the existing document.
    */
   patch<TableName extends TableNamesInDataModel<DataModel>>(
     id: GenericId<TableName>,
@@ -434,7 +434,7 @@ export interface BaseTableWriter<
    * `undefined` are removed.
    *
    * @param id - The {@link values.GenericId} of the document to patch.
-   * @param value - The partial {@link GenericDocument} to merge into the specified document. If this new value
+   * @param value - The {@link PatchValue} to merge into the specified document. If this new value
    * specifies system fields like `_id`, they must match the document's existing field values.
    */
   patch(
@@ -471,9 +471,26 @@ type NonUnion<T> = T extends never // `never` is the bottom type for TypeScript 
   : T;
 
 /**
- * This is like Partial, but it also allows undefined to be passed to optional
- * fields when `exactOptionalPropertyTypes` is enabled in the tsconfig.
+ * The type of the value argument to {@link GenericDatabaseWriter.patch}.
+ *
+ * This is like `Partial<T>`, but it also allows `undefined` to be passed to
+ * optional fields when `exactOptionalPropertyTypes` is enabled in the
+ * tsconfig. Fields set to `undefined` are removed; omitted fields are left
+ * unchanged.
+ *
+ * `db.patch` applies this to the full document, including system fields. If
+ * `_id` or `_creationTime` are specified they must match the existing
+ * document. To type a patch object that cannot include system fields:
+ *
+ * ```ts
+ * import type { PatchValue, WithoutSystemFields } from "convex/server";
+ * import type { Doc } from "./_generated/dataModel";
+ *
+ * type TaskPatch = PatchValue<WithoutSystemFields<Doc<"tasks">>>;
+ * ```
+ *
+ * @public
  */
-type PatchValue<T> = {
+export type PatchValue<T> = {
   [P in keyof T]?: undefined extends T[P] ? T[P] | undefined : T[P];
 };
