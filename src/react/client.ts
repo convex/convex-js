@@ -18,6 +18,7 @@ import type { UserIdentityAttributes } from "../browser/sync/protocol.js";
 import { RequestForQueries, useQueries } from "./use_queries.js";
 import { useSubscription } from "./use_subscription.js";
 import { parseArgs } from "../common/index.js";
+import type { WriteConflictRetryOptions } from "../common/write_conflict_retry.js";
 import {
   ArgsAndOptions,
   FunctionArgs,
@@ -65,9 +66,12 @@ export interface ReactMutation<
    * Execute the mutation on the server, returning a `Promise` of its return value.
    *
    * @param args - Arguments for the mutation to pass up to the server.
+   * @param options - Options for this mutation invocation.
    * @returns The return value of the server-side function call.
    */
-  (...args: OptionalRestArgs<Mutation>): Promise<FunctionReturnType<Mutation>>;
+  (
+    ...args: ArgsAndOptions<Mutation, WriteConflictRetryOptions>
+  ): Promise<FunctionReturnType<Mutation>>;
 
   /**
    * Define an optimistic update to apply as part of this mutation.
@@ -106,11 +110,16 @@ export function createMutation(
   client: ConvexReactClient,
   update?: OptimisticUpdate<any>,
 ): ReactMutation<any> {
-  function mutation(args?: Record<string, Value>): Promise<unknown> {
+  function mutation(
+    args?: Record<string, Value>,
+    options?: WriteConflictRetryOptions,
+  ): Promise<unknown> {
     assertNotAccidentalArgument(args);
 
     return client.mutation(mutationReference, args, {
       optimisticUpdate: update,
+      maxWriteConflictRetries: options?.maxWriteConflictRetries,
+      writeConflictRetryDelayMs: options?.writeConflictRetryDelayMs,
     });
   }
   mutation.withOptimisticUpdate = function withOptimisticUpdate(
@@ -294,6 +303,19 @@ export interface MutationOptions<Args extends Record<string, Value>> {
    * Once the mutation completes, the update will be rolled back.
    */
   optimisticUpdate?: OptimisticUpdate<Args> | undefined;
+  /**
+   * The number of additional attempts to make after Convex reports a final
+   * write conflict for this mutation.
+   *
+   * Defaults to 1. Set to 0 to disable client-side write conflict retries.
+   */
+  maxWriteConflictRetries?: number | undefined;
+  /**
+   * The delay before each additional write conflict retry, in milliseconds.
+   *
+   * Defaults to 2000.
+   */
+  writeConflictRetryDelayMs?: number | undefined;
 }
 
 /**

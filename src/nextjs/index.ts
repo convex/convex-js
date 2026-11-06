@@ -45,6 +45,7 @@
 
 import { ConvexHttpClient } from "../browser/index.js";
 import { validateDeploymentUrl } from "../common/index.js";
+import type { WriteConflictRetryOptions } from "../common/write_conflict_retry.js";
 import { Preloaded } from "../react/index.js";
 import {
   ArgsAndOptions,
@@ -86,6 +87,11 @@ export type NextjsOptions = {
    */
   skipConvexDeploymentUrlCheck?: boolean;
 };
+
+/**
+ * Options to {@link fetchMutation}.
+ */
+export type NextjsMutationOptions = NextjsOptions & WriteConflictRetryOptions;
 
 /**
  * Execute a Convex query function and return a `Preloaded`
@@ -163,11 +169,14 @@ export async function fetchMutation<
     | FunctionReference_future<"mutation">,
 >(
   mutation: Mutation,
-  ...args: ArgsAndOptions<Mutation, NextjsOptions>
+  ...args: ArgsAndOptions<Mutation, NextjsMutationOptions>
 ): Promise<FunctionReturnType<Mutation>> {
   const [fnArgs, options] = args;
   const client = setupClient(options ?? {});
-  return client.mutation(mutation, fnArgs || {});
+  return client.mutation(mutation, fnArgs || {}, {
+    maxWriteConflictRetries: options?.maxWriteConflictRetries,
+    writeConflictRetryDelayMs: options?.writeConflictRetryDelayMs,
+  });
 }
 
 /**
