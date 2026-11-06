@@ -399,6 +399,11 @@ export interface GenericActionCtx<DataModel extends GenericDataModel> {
   ): Promise<FunctionReturnType<Action>>;
 
   /**
+   * The request ID for the current function call.
+   */
+  requestId: string;
+
+  /**
    * A utility for scheduling Convex functions to run in the future.
    */
   scheduler: Scheduler;
