@@ -18,6 +18,7 @@ import { DeploymentType, DetailedDeploymentCredentials } from "../api.js";
 import { productionProvisionHost, provisionHost } from "../config.js";
 
 const DEFAULT_STARTUP_TIMEOUT_SECS = 30;
+const DEFAULT_LOCAL_BACKEND_INTERFACE = "127.0.0.1";
 const FIRST_CONTROL_PLANE_AUTH_BACKEND_VERSION =
   "precompiled-2026-09-15-4e9b83a";
 
@@ -50,6 +51,27 @@ async function parseStartupTimeoutSecs(ctx: Context): Promise<number> {
     });
   }
   return parsed;
+}
+
+/**
+ * Which host interface the local backend binds to. Defaults to loopback so a
+ * local deployment is not reachable from the network; override with
+ * CONVEX_LOCAL_BACKEND_INTERFACE for machines that deliberately serve a
+ * local deployment to other devices (convex/convex-js#200).
+ */
+export async function localBackendInterface(ctx: Context): Promise<string> {
+  const raw = process.env.CONVEX_LOCAL_BACKEND_INTERFACE;
+  if (raw === undefined) {
+    return DEFAULT_LOCAL_BACKEND_INTERFACE;
+  }
+  if (raw.trim() === "") {
+    return await ctx.crash({
+      exitCode: 1,
+      errorType: "fatal",
+      printedMessage: `Invalid CONVEX_LOCAL_BACKEND_INTERFACE=${JSON.stringify(raw)}: expected a host interface such as "127.0.0.1".`,
+    });
+  }
+  return raw;
 }
 
 export async function runLocalBackend(
@@ -99,6 +121,9 @@ export async function runLocalBackend(
   if (args.isLatestVersion) {
     // CLI args that were added in later versions of backend go here instead of above
     // since the CLI may run older versions of backend (e.g. when upgrading).
+    // Bind to loopback by default so local deployments are not reachable from
+    // the network (convex/convex-js#200).
+    commandArgs.push("--interface", await localBackendInterface(ctx));
     if (args.deploymentKind === "anonymous") {
       const uuid = loadUuidForAnonymousUser(ctx);
       if (uuid !== null) {
