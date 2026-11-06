@@ -532,6 +532,16 @@ export async function selectProject(
 }
 
 const cwd = path.basename(process.cwd());
+
+function validateProjectName(value: string): true | string {
+  const minProjectNameLength = 3;
+  const projectName = value.trim();
+  if (projectName.length < minProjectNameLength) {
+    return `Project name must be at least ${minProjectNameLength} characters.`;
+  }
+  return true;
+}
+
 async function selectNewProject(
   ctx: Context,
   chosenConfiguration: ChosenConfiguration,
@@ -550,6 +560,7 @@ async function selectNewProject(
     projectName = await promptString(ctx, {
       message: "Project name:",
       default: config.defaultProjectName || cwd,
+      validate: validateProjectName,
     });
     choseProjectInteractively = true;
   }
