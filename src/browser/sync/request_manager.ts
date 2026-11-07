@@ -73,6 +73,7 @@ export class RequestManager {
    */
   onResponse(
     response: MutationResponse | ActionResponse,
+    appliedTimestamp: Long,
   ): { requestId: RequestId; result: FunctionResult } | null {
     const requestInfo = this.inflightRequests.get(response.requestId);
     if (requestInfo === undefined) {
@@ -134,11 +135,17 @@ export class RequestManager {
       onResolve = () => status.onResult(result);
     }
 
-    // We can resolve Mutation failures immediately since they don't have any
-    // side effects. Actions are intentionally decoupled from
-    // queries/mutations here on the sync protocol since they have different
-    // guarantees.
-    if (response.type === "ActionResponse" || !response.success) {
+    // A covering transition can arrive before its mutation response. In that
+    // case read-your-writes is already satisfied; waiting for another transition
+    // would retain both the promise and its optimistic update unnecessarily.
+    // appliedTimestamp must describe query state on the current connection, not
+    // the maximum observed timestamp (which also includes mutation responses).
+    // Failures have no writes to observe, and actions are independent of queries.
+    if (
+      response.type === "ActionResponse" ||
+      !response.success ||
+      response.ts.lessThanOrEqual(appliedTimestamp)
+    ) {
       onResolve();
       this.inflightRequests.delete(response.requestId);
       this.requestsOlderThanRestart.delete(response.requestId);
@@ -153,8 +160,8 @@ export class RequestManager {
       return { requestId: response.requestId, result };
     }
 
-    // We have to wait to resolve the request promise until after we transition
-    // past this timestamp so clients can read their own writes.
+    // Query state is still behind the commit. Keep the optimistic update and
+    // promise pending until a transition reaches the commit timestamp.
     requestInfo.status = {
       status: "Completed",
       result,
