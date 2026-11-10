@@ -18,6 +18,9 @@ const MAX_TOKEN_CONFIRMATION_ATTEMPTS = 2;
  * returned token or the token is anticipated to expiring soon
  * based on its `exp` time.
  *
+ * If the function throws, the error is logged and handled the same as
+ * returning `null`.
+ *
  * See {@link ConvexReactClient.setAuth}.
  *
  * @public
@@ -463,7 +466,13 @@ export class AuthenticationManager {
     this._logVerbose(
       `fetching token with config version ${originalConfigVersion}`,
     );
-    const token = await fetchToken(fetchArgs);
+    let token: string | null | undefined;
+    try {
+      token = await fetchToken(fetchArgs);
+    } catch (error) {
+      this.logger.error("Failed to fetch auth token:", error);
+      token = null;
+    }
     if (this.configVersion !== originalConfigVersion) {
       // This is a stale config
       this._logVerbose(
