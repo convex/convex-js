@@ -224,9 +224,12 @@ export class AuthenticationManager {
     if (this.authState.state === "waitingForServerConfirmationOfFreshToken") {
       this._logVerbose("server confirmed new auth token is valid");
       this.notifyRefreshChange(false);
+      // Capture hadAuth before scheduleTokenRefetch() replaces the auth
+      // state: it decides whether onAuthChange(true) still needs to fire.
+      const hadAuth = this.authState.hadAuth;
       this.scheduleTokenRefetch(this.authState.token);
       this.tokenConfirmationAttempts = 0;
-      if (!this.authState.hadAuth) {
+      if (!hadAuth) {
         this.authState.config.onAuthChange(true);
       }
     }
@@ -304,7 +307,19 @@ export class AuthenticationManager {
       return;
     }
 
-    if (token.value && this.syncState.isNewAuth(token.value)) {
+    if (token.value) {
+      if (this.syncState.isNewAuth(token.value)) {
+        this._logVerbose("reauthenticating with a new token");
+      } else {
+        // The fetch succeeded but the provider returned the same still-valid
+        // token (e.g. it has not reached its refresh window yet). The token we
+        // have is still the best available: re-send Authenticate with it
+        // instead of de-authenticating. A persistently-rejected token still
+        // de-authenticates via the token-confirmation-attempts budget above.
+        this._logVerbose(
+          "reauthentication fetched the same token, retrying with it",
+        );
+      }
       this.authenticate(token.value);
       this.setAuthState({
         state: "waitingForServerConfirmationOfFreshToken",
