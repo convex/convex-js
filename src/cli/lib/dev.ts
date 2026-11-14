@@ -343,8 +343,9 @@ export async function watchAndPush(
                 });
                 shellChild!.on("exit", (code, signal) => {
                   shellChild = undefined;
-                  // `shellSigintListener` is cleared before convex dev signals
-                  // the command, so this skips exits that convex dev caused.
+                  // convex dev clears `shellSigintListener` before it stops the
+                  // command, so a listener that is still set means the command
+                  // exited on its own.
                   if (code === 0 && exitWithCommand && shellSigintListener) {
                     resolve({ exit: outerCtx.flushAndExit(0) });
                     return;

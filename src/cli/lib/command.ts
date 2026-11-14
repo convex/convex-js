@@ -323,8 +323,8 @@ export async function normalizeDevOptions(
           ? {
               kind: "shell",
               command: (cmdOptions.start ?? cmdOptions.runSh)!,
-              // `--start` runs a long-running command, so `convex dev` ends
-              // with it. A `--run-sh` command can be a one-off.
+              // `convex dev` exits when a `--start` command exits. A `--run-sh`
+              // command can be a one-off script, so `convex dev` keeps running.
               exitWithCommand: cmdOptions.start !== undefined,
             }
           : undefined,
