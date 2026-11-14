@@ -10,7 +10,7 @@ type ParsedExpiration =
 const PARSE_ERROR_MESSAGE =
   `Supported formats:\n` +
   `  "none"                          — no expiration\n` +
-  `  "in 7 days"                     — relative (minutes, hours, days)\n` +
+  `  "in 1 day"                      — relative (minutes, hours, days)\n` +
   `  "2026-04-01T00:00:00Z"          — UTC datetime\n` +
   `  "1711828382"                    — Unix timestamp (seconds)\n` +
   `  "1711828382000"                 — Unix timestamp (milliseconds)`;
