@@ -206,6 +206,13 @@ export function usePaginatedQuery_experimental<
   const argsObject = skip ? {} : queryArgs;
 
   const convexClient = useConvex();
+  if (convexClient === undefined) {
+    throw new Error(
+      "Could not find Convex client! `usePaginatedQuery_experimental` must be used in the React component " +
+        "tree under `ConvexProvider`. Did you forget it? " +
+        "See https://docs.convex.dev/quick-start#set-up-convex-in-your-react-app",
+    );
+  }
   const logger = convexClient.logger;
 
   // The identity of createInitialState changes each time!
