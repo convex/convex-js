@@ -52,7 +52,7 @@ export async function devAgainstDeployment(
     untilSuccess: boolean;
     run?:
       | { kind: "function"; name: string; component?: string | undefined }
-      | { kind: "shell"; command: string }
+      | { kind: "shell"; command: string; exitWithCommand: boolean }
       | undefined;
     tailLogs: LogMode;
     traceEvents: boolean;
@@ -178,7 +178,7 @@ export async function watchAndPush(
   cmdOptions: {
     run?:
       | { kind: "function"; name: string; component?: string | undefined }
-      | { kind: "shell"; command: string }
+      | { kind: "shell"; command: string; exitWithCommand: boolean }
       | undefined;
     once: boolean;
     untilSuccess: boolean;
@@ -193,9 +193,9 @@ export async function watchAndPush(
   let ran = false;
   let pushed = false;
   let shellChild: ChildProcess | undefined;
-  // Resolves once the `--start` command exits. `failureExit` is the
-  // in-flight `flushAndExit(1)` if it failed.
-  let shellExited: Promise<{ failureExit?: Promise<never> }> | undefined;
+  // Resolves once the `--start` command exits. `exit` is the in-flight
+  // `flushAndExit` if its exit ends `convex dev`.
+  let shellExited: Promise<{ exit?: Promise<never> }> | undefined;
   let shellCleanupHandle: string | undefined;
   let shellSigintListener: (() => void) | undefined;
   let tableNameTriggeringRetry;
@@ -268,6 +268,7 @@ export async function watchAndPush(
               // piping stdin/stdout/stderr. It runs alongside dev and is
               // waited on during clean exit or killed on signal exit.
               const shellCommand = cmdOptions.run.command;
+              const exitWithCommand = cmdOptions.run.exitWithCommand;
               const signalShellChild = (signal: NodeJS.Signals) => {
                 if (!shellChild) {
                   return;
@@ -328,20 +329,26 @@ export async function watchAndPush(
                 }
                 await shellExited;
               });
-              // A failed --start command exits from here. A long-running
-              // `convex dev`, whose loop is blocked on watchers, ends right
-              // away. With --once or --until-success, the `finally` below
-              // awaits the `flushAndExit(1)` Promise.
+              // A failed --start command, or one that exits on its own, exits
+              // from here. A long-running `convex dev`, whose loop is blocked
+              // on watchers, ends right away. With --once or --until-success,
+              // the `finally` below awaits the `flushAndExit` Promise.
               shellExited = new Promise((resolve) => {
                 shellChild!.on("error", (error) => {
                   logError(
                     `Failed to run command \`${shellCommand}\`: ${error.message}`,
                   );
                   shellChild = undefined;
-                  resolve({ failureExit: outerCtx.flushAndExit(1) });
+                  resolve({ exit: outerCtx.flushAndExit(1) });
                 });
                 shellChild!.on("exit", (code, signal) => {
                   shellChild = undefined;
+                  // `shellSigintListener` is cleared before convex dev signals
+                  // the command, so this skips exits that convex dev caused.
+                  if (code === 0 && exitWithCommand && shellSigintListener) {
+                    resolve({ exit: outerCtx.flushAndExit(0) });
+                    return;
+                  }
                   // If killed by a signal (e.g. from cleanup on shutdown),
                   // don't treat it as a failure — convex dev is already
                   // shutting down.
@@ -352,7 +359,7 @@ export async function watchAndPush(
                   logError(
                     `Command \`${shellCommand}\` exited with code ${code}`,
                   );
-                  resolve({ failureExit: outerCtx.flushAndExit(1) });
+                  resolve({ exit: outerCtx.flushAndExit(1) });
                 });
               });
               break;
@@ -465,8 +472,8 @@ export async function watchAndPush(
     if (shellCleanupHandle) {
       outerCtx.removeCleanup(shellCleanupHandle);
     }
-    if (shellResult?.failureExit) {
-      await shellResult.failureExit;
+    if (shellResult?.exit) {
+      await shellResult.exit;
     }
   }
 }

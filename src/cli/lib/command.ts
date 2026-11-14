@@ -272,7 +272,7 @@ export async function normalizeDevOptions(
   untilSuccess: boolean;
   run?:
     | { kind: "function"; name: string; component?: string | undefined }
-    | { kind: "shell"; command: string }
+    | { kind: "shell"; command: string; exitWithCommand: boolean }
     | undefined;
   tailLogs: LogMode;
   traceEvents: boolean;
@@ -323,6 +323,9 @@ export async function normalizeDevOptions(
           ? {
               kind: "shell",
               command: (cmdOptions.start ?? cmdOptions.runSh)!,
+              // `--start` runs a long-running command, so `convex dev` ends
+              // with it. A `--run-sh` command can be a one-off.
+              exitWithCommand: cmdOptions.start !== undefined,
             }
           : undefined,
     tailLogs:
