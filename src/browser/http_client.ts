@@ -16,8 +16,10 @@ import {
 import {
   instantiateDefaultLogger,
   instantiateNoopLogger,
+  createHybridErrorStacktrace,
   logForFunction,
   Logger,
+  UdfType,
 } from "./logging.js";
 import {
   ArgsAndOptions,
@@ -70,8 +72,7 @@ export class ConvexHttpClient {
   private logger: Logger;
   private mutationQueue: Array<{
     mutation:
-      | FunctionReference<"mutation">
-      | FunctionReference_future<"mutation">;
+      FunctionReference<"mutation"> | FunctionReference_future<"mutation">;
     args: FunctionArgs<any>;
     resolve: (value: any) => void;
     reject: (error: any) => void;
@@ -228,8 +229,7 @@ export class ConvexHttpClient {
    */
   async consistentQuery<
     Query extends
-      | FunctionReference<"query">
-      | FunctionReference_future<"query">,
+      FunctionReference<"query"> | FunctionReference_future<"query">,
   >(
     query: Query,
     ...args: OptionalRestArgs<Query>
@@ -276,8 +276,7 @@ export class ConvexHttpClient {
    */
   async query<
     Query extends
-      | FunctionReference<"query">
-      | FunctionReference_future<"query">,
+      FunctionReference<"query"> | FunctionReference_future<"query">,
   >(
     query: Query,
     ...args: OptionalRestArgs<Query>
@@ -288,8 +287,7 @@ export class ConvexHttpClient {
 
   private async queryInner<
     Query extends
-      | FunctionReference<"query">
-      | FunctionReference_future<"query">,
+      FunctionReference<"query"> | FunctionReference_future<"query">,
   >(
     query: Query,
     queryArgs: FunctionArgs<Query>,
@@ -342,13 +340,7 @@ export class ConvexHttpClient {
       case "success":
         return jsonToConvex(respJSON.value);
       case "error":
-        if (respJSON.errorData !== undefined) {
-          throw forwardErrorData(
-            respJSON.errorData,
-            new ConvexError(respJSON.errorMessage),
-          );
-        }
-        throw new Error(respJSON.errorMessage);
+        throw errorFromResponse(respJSON, "query", name);
       default:
         throw new Error(`Invalid response: ${JSON.stringify(respJSON)}`);
     }
@@ -356,8 +348,7 @@ export class ConvexHttpClient {
 
   private async mutationInner<
     Mutation extends
-      | FunctionReference<"mutation">
-      | FunctionReference_future<"mutation">,
+      FunctionReference<"mutation"> | FunctionReference_future<"mutation">,
   >(
     mutation: Mutation,
     mutationArgs: FunctionArgs<Mutation>,
@@ -397,13 +388,7 @@ export class ConvexHttpClient {
       case "success":
         return jsonToConvex(respJSON.value);
       case "error":
-        if (respJSON.errorData !== undefined) {
-          throw forwardErrorData(
-            respJSON.errorData,
-            new ConvexError(respJSON.errorMessage),
-          );
-        }
-        throw new Error(respJSON.errorMessage);
+        throw errorFromResponse(respJSON, "mutation", name);
       default:
         throw new Error(`Invalid response: ${JSON.stringify(respJSON)}`);
     }
@@ -429,8 +414,7 @@ export class ConvexHttpClient {
 
   private enqueueMutation<
     Mutation extends
-      | FunctionReference<"mutation">
-      | FunctionReference_future<"mutation">,
+      FunctionReference<"mutation"> | FunctionReference_future<"mutation">,
   >(
     mutation: Mutation,
     args: FunctionArgs<Mutation>,
@@ -452,8 +436,7 @@ export class ConvexHttpClient {
    */
   async mutation<
     Mutation extends
-      | FunctionReference<"mutation">
-      | FunctionReference_future<"mutation">,
+      FunctionReference<"mutation"> | FunctionReference_future<"mutation">,
   >(
     mutation: Mutation,
     ...args: ArgsAndOptions<Mutation, HttpMutationOptions>
@@ -479,8 +462,7 @@ export class ConvexHttpClient {
    */
   async action<
     Action extends
-      | FunctionReference<"action">
-      | FunctionReference_future<"action">,
+      FunctionReference<"action"> | FunctionReference_future<"action">,
   >(
     action: Action,
     ...args: OptionalRestArgs<Action>
@@ -521,13 +503,7 @@ export class ConvexHttpClient {
       case "success":
         return jsonToConvex(respJSON.value);
       case "error":
-        if (respJSON.errorData !== undefined) {
-          throw forwardErrorData(
-            respJSON.errorData,
-            new ConvexError(respJSON.errorMessage),
-          );
-        }
-        throw new Error(respJSON.errorMessage);
+        throw errorFromResponse(respJSON, "action", name);
       default:
         throw new Error(`Invalid response: ${JSON.stringify(respJSON)}`);
     }
@@ -592,17 +568,27 @@ export class ConvexHttpClient {
       case "success":
         return jsonToConvex(respJSON.value);
       case "error":
-        if (respJSON.errorData !== undefined) {
-          throw forwardErrorData(
-            respJSON.errorData,
-            new ConvexError(respJSON.errorMessage),
-          );
-        }
-        throw new Error(respJSON.errorMessage);
+        throw errorFromResponse(respJSON, "any", name);
       default:
         throw new Error(`Invalid response: ${JSON.stringify(respJSON)}`);
     }
   }
+}
+
+function errorFromResponse(
+  response: { errorMessage: string; errorData?: JSONValue },
+  source: UdfType,
+  udfPath: string,
+) {
+  const message = createHybridErrorStacktrace(source, udfPath, {
+    success: false,
+    errorMessage: response.errorMessage,
+    logLines: [],
+  });
+  if (response.errorData !== undefined) {
+    return forwardErrorData(response.errorData, new ConvexError(message));
+  }
+  return new Error(message);
 }
 
 function forwardErrorData(errorData: JSONValue, error: ConvexError<string>) {
