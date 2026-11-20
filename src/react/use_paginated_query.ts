@@ -149,6 +149,8 @@ const completeSplitQuery =
  *
  * To learn more about pagination, see [Paginated Queries](https://docs.convex.dev/database/pagination).
  *
+ * Throws an error if not used under {@link ConvexProvider}.
+ *
  * @param query - A FunctionReference to the public query function to run.
  * @param args - The arguments object for the query function, excluding
  * the `paginationOpts` property. That property is injected by this hook.
