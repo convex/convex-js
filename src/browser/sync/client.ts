@@ -479,8 +479,10 @@ export class BaseConvexClient {
               if (serverMessage.success) {
                 this.observedTimestamp(serverMessage.ts);
               }
-              const completedMutationInfo =
-                this.requestManager.onResponse(serverMessage);
+              const completedMutationInfo = this.requestManager.onResponse(
+                serverMessage,
+                this.remoteQuerySet.timestamp(),
+              );
               if (completedMutationInfo !== null) {
                 this.notifyOnQueryResultChanges(
                   new Map([
@@ -494,7 +496,10 @@ export class BaseConvexClient {
               break;
             }
             case "ActionResponse": {
-              this.requestManager.onResponse(serverMessage);
+              this.requestManager.onResponse(
+                serverMessage,
+                this.remoteQuerySet.timestamp(),
+              );
               break;
             }
             case "AuthError": {
