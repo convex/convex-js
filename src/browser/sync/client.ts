@@ -25,15 +25,19 @@ import {
 } from "./optimistic_updates.js";
 import {
   OptimisticQueryResults,
+  Query,
   QueryResultsMap,
 } from "./optimistic_updates_impl.js";
 import {
   ActionRequest,
+  ClientMessage,
   MutationRequest,
   QueryId,
   QueryJournal,
+  QuerySetModification,
   ServerMessage,
   RequestId,
+  StateModification,
   TS,
   UserIdentityAttributes,
 } from "./protocol.js";
@@ -270,6 +274,12 @@ export class BaseConvexClient {
   private _nextRequestId: RequestId;
   private _onTransitionFns: Map<number, (transition: Transition) => void> =
     new Map();
+  // Query set edits made in the current microtask, sent as one message.
+  private pendingQuerySetModification: QuerySetModification | null = null;
+  // Unsubscribed queries whose results go on the next incremental ingest.
+  private readonly removedQueryTokens = new Set<QueryToken>();
+  // A reconnect replaced the remote query set; rebuild all results once.
+  private fullIngestPending = false;
   private readonly _sessionId: string;
   private firstMessageReceived = false;
   private readonly debug: boolean;
@@ -352,6 +362,7 @@ export class BaseConvexClient {
     // this synchronously, the callback wouldn't work) so the initial
     // pause for expectAuth we call it at the end of this constructor.
     const pauseSocket = () => {
+      this.flushQuerySetModification();
       this.webSocketManager.pause();
       this.state.pause();
     };
@@ -360,7 +371,7 @@ export class BaseConvexClient {
       {
         authenticate: (token) => {
           const message = this.state.setAuth(token);
-          this.webSocketManager.sendMessage(message);
+          this.sendMessage(message);
           return message.baseVersion;
         },
         stopSocket: () => this.webSocketManager.stop(),
@@ -434,6 +445,9 @@ export class BaseConvexClient {
             (queryId) => this.state.queryPath(queryId),
             this.logger,
           );
+          this.fullIngestPending = true;
+          // `restart()` resends the whole query set.
+          this.pendingQuerySetModification = null;
           const [querySetModification, authModification] = this.state.restart();
           if (authModification) {
             this.webSocketManager.sendMessage(authModification);
@@ -472,7 +486,10 @@ export class BaseConvexClient {
               const completedRequests = this.requestManager.removeCompleted(
                 this.remoteQuerySet.timestamp(),
               );
-              this.notifyOnQueryResultChanges(completedRequests);
+              this.notifyOnQueryResultChanges(
+                completedRequests,
+                serverMessage.modifications,
+              );
               break;
             }
             case "MutationResponse": {
@@ -489,6 +506,7 @@ export class BaseConvexClient {
                       completedMutationInfo.result,
                     ],
                   ]),
+                  [],
                 );
               }
               break;
@@ -562,36 +580,20 @@ export class BaseConvexClient {
    *
    * @param completedMutations - A set of mutation IDs whose optimistic updates
    * are no longer needed.
+   * @param modifications - The query results the server changed.
    */
   private notifyOnQueryResultChanges(
     completedRequests: Map<RequestId, FunctionResult>,
+    modifications: StateModification[],
   ) {
-    const remoteQueryResults: Map<QueryId, FunctionResult> =
-      this.remoteQuerySet.remoteQueryResults();
-    const queryTokenToValue: QueryResultsMap = new Map();
-    for (const [queryId, result] of remoteQueryResults) {
-      const queryToken = this.state.queryToken(queryId);
-      // It's possible that we've already unsubscribed to this query but
-      // the server hasn't learned about that yet. If so, ignore this one.
-
-      if (queryToken !== null) {
-        const query = {
-          result,
-          udfPath: this.state.queryPath(queryId)!,
-          args: this.state.queryArgs(queryId)!,
-        };
-        queryTokenToValue.set(queryToken, query);
-      }
-    }
-
     // Query tokens that are new (because of new server results or new local optimistic updates)
     // or differ from old values (because of changes from local optimistic updates or new results
     // from the server).
     const changedQueryTokens =
-      this.optimisticQueryResults.ingestQueryResultsFromServer(
-        queryTokenToValue,
-        new Set(completedRequests.keys()),
-      );
+      this.fullIngestPending ||
+      this.optimisticQueryResults.hasOptimisticUpdates()
+        ? this.ingestAllQueryResults(completedRequests)
+        : this.ingestQueryResultChanges(modifications);
 
     this.handleTransition({
       queries: changedQueryTokens.map((token) => {
@@ -613,6 +615,72 @@ export class BaseConvexClient {
       ),
       timestamp: this.remoteQuerySet.timestamp(),
     });
+  }
+
+  /**
+   * Rebuild every query result from the remote query set and replay the
+   * optimistic updates over it.
+   */
+  private ingestAllQueryResults(
+    completedRequests: Map<RequestId, FunctionResult>,
+  ) {
+    this.fullIngestPending = false;
+    this.removedQueryTokens.clear();
+    const remoteQueryResults: Map<QueryId, FunctionResult> =
+      this.remoteQuerySet.remoteQueryResults();
+    const queryTokenToValue: QueryResultsMap = new Map();
+    for (const [queryId, result] of remoteQueryResults) {
+      const queryToken = this.state.queryToken(queryId);
+      // It's possible that we've already unsubscribed to this query but
+      // the server hasn't learned about that yet. If so, ignore this one.
+
+      if (queryToken !== null) {
+        const query = {
+          result,
+          udfPath: this.state.queryPath(queryId)!,
+          args: this.state.queryArgs(queryId)!,
+        };
+        queryTokenToValue.set(queryToken, query);
+      }
+    }
+    return this.optimisticQueryResults.ingestQueryResultsFromServer(
+      queryTokenToValue,
+      new Set(completedRequests.keys()),
+    );
+  }
+
+  /**
+   * With no optimistic update to replay, only the queries the server changed
+   * and the ones unsubscribed since the last ingest differ from what a full
+   * rebuild would produce.
+   */
+  private ingestQueryResultChanges(modifications: StateModification[]) {
+    const remoteQueryResults = this.remoteQuerySet.remoteQueryResults();
+    const changes = new Map<QueryToken, Query | undefined>();
+    for (const queryToken of this.removedQueryTokens) {
+      changes.set(queryToken, undefined);
+    }
+    this.removedQueryTokens.clear();
+    for (const { queryId } of modifications) {
+      const queryToken = this.state.queryToken(queryId);
+      if (queryToken === null) {
+        continue;
+      }
+      const result = remoteQueryResults.get(queryId);
+      changes.set(
+        queryToken,
+        result === undefined
+          ? undefined
+          : {
+              result,
+              udfPath: this.state.queryPath(queryId)!,
+              args: this.state.queryArgs(queryId)!,
+            },
+      );
+    }
+    return this.optimisticQueryResults.ingestQueryResultChangesFromServer(
+      changes,
+    );
   }
 
   private handleTransition(transition: Transition) {
@@ -684,12 +752,12 @@ export class BaseConvexClient {
   /** @internal */
   setAdminAuth(value: string, fakeUserIdentity?: UserIdentityAttributes) {
     const message = this.state.setAdminAuth(value, fakeUserIdentity);
-    this.webSocketManager.sendMessage(message);
+    this.sendMessage(message);
   }
 
   clearAuth() {
     const message = this.state.clearAuth();
-    this.webSocketManager.sendMessage(message);
+    this.sendMessage(message);
   }
 
   /**
@@ -720,17 +788,56 @@ export class BaseConvexClient {
       options?.componentPath,
     );
     if (modification !== null) {
-      this.webSocketManager.sendMessage(modification);
+      this.sendQuerySetModification(modification);
     }
     return {
       queryToken,
       unsubscribe: () => {
         const modification = unsubscribe();
         if (modification) {
-          this.webSocketManager.sendMessage(modification);
+          this.removedQueryTokens.add(queryToken);
+          this.sendQuerySetModification(modification);
         }
       },
     };
+  }
+
+  /**
+   * Merge the query set edits of one microtask into one `ModifyQuerySet`.
+   * `LocalSyncState` numbers unpaused edits consecutively, so the merged
+   * message spans the first base version to the last new version. Edits made
+   * while paused go out unbatched; `LocalSyncState` holds them for `resume()`.
+   */
+  private sendQuerySetModification(modification: QuerySetModification) {
+    if (this.state.isPaused()) {
+      this.webSocketManager.sendMessage(modification);
+      return;
+    }
+    const pending = this.pendingQuerySetModification;
+    if (pending !== null) {
+      pending.newVersion = modification.newVersion;
+      pending.modifications.push(...modification.modifications);
+      return;
+    }
+    this.pendingQuerySetModification = {
+      ...modification,
+      modifications: [...modification.modifications],
+    };
+    void Promise.resolve().then(() => this.flushQuerySetModification());
+  }
+
+  private flushQuerySetModification() {
+    const pending = this.pendingQuerySetModification;
+    if (pending !== null) {
+      this.pendingQuerySetModification = null;
+      this.webSocketManager.sendMessage(pending);
+    }
+  }
+
+  /** Sends `message` after the query set edits queued before it. */
+  private sendMessage(message: ClientMessage): boolean {
+    this.flushQuerySetModification();
+    return this.webSocketManager.sendMessage(message);
   }
 
   /**
@@ -978,7 +1085,7 @@ export class BaseConvexClient {
       componentPath,
       args: [convexToJson(mutationArgs)],
     };
-    const mightBeSent = this.webSocketManager.sendMessage(message);
+    const mightBeSent = this.sendMessage(message);
     const mutationPromise = this.requestManager.request(message, mightBeSent);
     return {
       requestId,
@@ -1029,7 +1136,7 @@ export class BaseConvexClient {
       args: [convexToJson(actionArgs)],
     };
 
-    const mightBeSent = this.webSocketManager.sendMessage(message);
+    const mightBeSent = this.sendMessage(message);
     return this.requestManager.request(message, mightBeSent);
   }
 
@@ -1084,7 +1191,7 @@ export class BaseConvexClient {
   private reportMarks() {
     if (this.debug) {
       const report = getMarksReport(this.sessionId);
-      this.webSocketManager.sendMessage({
+      this.sendMessage({
         type: "Event",
         eventType: "ClientConnect",
         event: report,

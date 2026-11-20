@@ -337,6 +337,10 @@ export class LocalSyncState {
     this.paused = true;
   }
 
+  isPaused(): boolean {
+    return this.paused;
+  }
+
   resume(): [QuerySetModification | undefined, Authenticate | undefined] {
     const querySet: QuerySetModification | undefined =
       this.pendingQuerySetModifications.size > 0
