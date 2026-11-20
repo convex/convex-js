@@ -329,10 +329,12 @@ export async function watchAndPush(
                 }
                 await shellExited;
               });
-              // A failed --start command, or one that exits on its own, exits
-              // from here. A long-running `convex dev`, whose loop is blocked
-              // on watchers, ends right away. With --once or --until-success,
-              // the `finally` below awaits the `flushAndExit` Promise.
+              // A command that fails ends `convex dev` from here. So does a
+              // --start command that exits with code 0, unless `convex dev`
+              // is already exiting. A long-running `convex dev`, whose loop
+              // is blocked on watchers, ends right away. With --once or
+              // --until-success, the `finally` below awaits the
+              // `flushAndExit` Promise.
               shellExited = new Promise((resolve) => {
                 shellChild!.on("error", (error) => {
                   logError(
@@ -343,10 +345,17 @@ export async function watchAndPush(
                 });
                 shellChild!.on("exit", (code, signal) => {
                   shellChild = undefined;
-                  // convex dev clears `shellSigintListener` before it stops the
-                  // command, so a listener that is still set means the command
-                  // exited on its own.
-                  if (code === 0 && exitWithCommand && shellSigintListener) {
+                  // `removeCleanup` returns null once an exit has taken the
+                  // cleanups, after Ctrl+C or a failure elsewhere. Only start
+                  // an exit here when none is running.
+                  if (
+                    code === 0 &&
+                    exitWithCommand &&
+                    outerCtx.removeCleanup(shellCleanupHandle!) !== null
+                  ) {
+                    logMessage(
+                      `Command \`${shellCommand}\` exited, stopping \`npx convex dev\``,
+                    );
                     resolve({ exit: outerCtx.flushAndExit(0) });
                     return;
                   }
