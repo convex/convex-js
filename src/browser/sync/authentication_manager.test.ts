@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Logger } from "../logging.js";
 import {
   AuthenticationManager,
@@ -177,5 +177,50 @@ describe("setAuth during reauthentication (convex/convex-js#194)", () => {
     expect(socket.restarts).toBe(1);
     expect(socket.stopped).toBe(false);
     expect(syncState.getAuth()?.value).toBe("token-second");
+  });
+
+  it("keeps the new auth when setConfig finishes before stopSocket resolves", async () => {
+    const syncState = new LocalSyncState();
+    let stopped = false;
+    let releaseStop!: () => void;
+    const onChange = vi.fn();
+    const manager = new AuthenticationManager(
+      syncState,
+      {
+        authenticate: (token: string) => syncState.setAuth(token).baseVersion,
+        // Like WebSocketManager.stop(): "stopped" at once, resolves on close.
+        stopSocket: () => {
+          stopped = true;
+          return new Promise<void>((resolve) => {
+            releaseStop = resolve;
+          });
+        },
+        tryRestartSocket: () => {
+          stopped = false;
+        },
+        pauseSocket: noop,
+        resumeSocket: noop,
+        clearAuth: noop,
+      },
+      {
+        logger: silentLogger(),
+        refreshTokenLeewaySeconds: 60,
+        initialAuthTokenReuse: false,
+      },
+    );
+
+    await manager.setConfig(async () => "token-first", noop);
+    manager.onAuthError(authError());
+    await tick();
+
+    // The new provider returns the same token on a forced refresh.
+    await manager.setConfig(async () => "token-new", onChange);
+    expect(stopped).toBe(false);
+
+    releaseStop();
+    await tick();
+
+    expect(syncState.getAuth()?.value).toBe("token-new");
+    expect(onChange).not.toHaveBeenCalledWith(false);
   });
 });

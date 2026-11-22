@@ -292,8 +292,12 @@ export class AuthenticationManager {
     }
 
     this.notifyRefreshChange(true);
+    const { config } = this.authState;
     await this.stopSocket();
-    if ((this.authState.state as AuthState["state"]) === "noAuth") {
+    if (
+      (this.authState.state as AuthState["state"]) === "noAuth" ||
+      this.authState.config !== config
+    ) {
       // setConfig() or stop() ran during the await.
       return;
     }
