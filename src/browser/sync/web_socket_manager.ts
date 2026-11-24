@@ -764,9 +764,16 @@ export class WebSocketManager {
       case "terminated":
         // If already stopped or stopping ignore.
         return;
-      case "connecting":
-      case "ready": {
+      case "connecting": {
         this.socket = { ...this.socket, paused: "yes" };
+        return;
+      }
+      case "ready": {
+        // A socket that opened while paused has not run `onOpen` yet. Keep
+        // that marker so `resume()` still sends the initial Connect.
+        if (this.socket.paused !== "uninitialized") {
+          this.socket = { ...this.socket, paused: "yes" };
+        }
         return;
       }
       default: {
