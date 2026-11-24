@@ -110,18 +110,28 @@ export function useQueriesHelper(
   // Unsubscribe from all queries on unmount.
   useEffect(() => () => observer.destroy(), [observer]);
 
-  const subscription = useMemo(
-    () => ({
+  const subscription = useMemo(() => {
+    // `getLocalResults` builds a new object on every call, and the observer
+    // notifies on every transition (including optimistic update replays) even
+    // when these queries' results didn't change. Return the previous object
+    // when every result is identical so that `useSubscription` doesn't
+    // re-render.
+    let previous: Record<string, any | undefined | Error> | undefined;
+    return {
       getCurrentValue: () => {
-        return observer.getLocalResults(queries);
+        const next = observer.getLocalResults(queries);
+        if (previous !== undefined && sameResults(previous, next)) {
+          return previous;
+        }
+        previous = next;
+        return next;
       },
       subscribe: (callback: () => void) => {
         observer.setQueries(queries);
         return observer.subscribe(callback);
       },
-    }),
-    [observer, queries],
-  );
+    };
+  }, [observer, queries]);
 
   return useSubscription(subscription);
 }
@@ -159,3 +169,17 @@ type RequestForQueriesCompat = Record<
     paginationOptions?: SubscribeToPaginatedQueryOptions;
   }
 >;
+
+function sameResults(
+  a: Record<string, any | undefined | Error>,
+  b: Record<string, any | undefined | Error>,
+): boolean {
+  const keys = Object.keys(b);
+  return (
+    keys.length === Object.keys(a).length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(a, key) && a[key] === b[key],
+    )
+  );
+}
