@@ -41,6 +41,7 @@ export class DefaultLogger implements Logger {
     (level: LogLevel, ...args: any[]) => void
   >;
   private _verbose: boolean;
+  private _nextLogLineListenerId = 0;
 
   constructor(options: { verbose: boolean }) {
     this._onLogLineFuncs = {};
@@ -50,13 +51,11 @@ export class DefaultLogger implements Logger {
   addLogLineListener(
     func: (level: LogLevel, ...args: any[]) => void,
   ): () => void {
-    let id = Math.random().toString(36).substring(2, 15);
-    for (let i = 0; i < 10; i++) {
-      if (this._onLogLineFuncs[id] === undefined) {
-        break;
-      }
-      id = Math.random().toString(36).substring(2, 15);
-    }
+    // A counter rather than `Math.random()`: every `ConvexHttpClient` adds a
+    // listener, and frameworks that prerender (such as Next.js with
+    // `cacheComponents`) treat `Math.random()` during a render as
+    // nondeterministic and bail out of the prerender.
+    const id = String(this._nextLogLineListenerId++);
     this._onLogLineFuncs[id] = func;
     return () => {
       delete this._onLogLineFuncs[id];
