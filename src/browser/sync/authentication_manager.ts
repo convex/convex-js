@@ -183,6 +183,9 @@ export class AuthenticationManager {
     }
     this._logVerbose("resuming WS after auth token fetch");
     this.resumeSocket();
+    // A reauthentication this config superseded may have stopped the socket and
+    // returned without restarting it; resume() leaves a stopped socket stopped.
+    this.tryRestartSocket();
   }
 
   onTransition(serverMessage: Transition) {
@@ -289,8 +292,12 @@ export class AuthenticationManager {
     }
 
     this.notifyRefreshChange(true);
+    const { config } = this.authState;
     await this.stopSocket();
-    if ((this.authState.state as AuthState["state"]) === "noAuth") {
+    if (
+      (this.authState.state as AuthState["state"]) === "noAuth" ||
+      this.authState.config !== config
+    ) {
       // setConfig() or stop() ran during the await.
       return;
     }
