@@ -124,6 +124,8 @@ type UsePaginatedQueryState = {
  *
  * To learn more about pagination, see [Paginated Queries](https://docs.convex.dev/database/pagination).
  *
+ * Throws an error if not used under {@link ConvexProvider}.
+ *
  * @param query - A FunctionReference to the public query function to run.
  * @param args - The arguments object for the query function, excluding
  * the `paginationOpts` property. That property is injected by this hook.
@@ -149,6 +151,8 @@ export function usePaginatedQuery_experimental<
 /**
  * Experimental new usePaginatedQuery implementation that accepts an options object
  * rather than positional arguments.
+ *
+ * Throws an error if not used under {@link ConvexProvider}.
  *
  * @param options - A {@link UsePaginatedQueryOptions} object including `query` and `args`.
  * @returns A {@link UsePaginatedQueryObjectReturnType} object with `data`, `status`,
@@ -206,6 +210,13 @@ export function usePaginatedQuery_experimental<
   const argsObject = skip ? {} : queryArgs;
 
   const convexClient = useConvex();
+  if (convexClient === undefined) {
+    throw new Error(
+      "Could not find Convex client! `usePaginatedQuery_experimental` must be used in the React component " +
+        "tree under `ConvexProvider`. Did you forget it? " +
+        "See https://docs.convex.dev/quick-start#set-up-convex-in-your-react-app",
+    );
+  }
   const logger = convexClient.logger;
 
   // The identity of createInitialState changes each time!
