@@ -81,6 +81,7 @@ export {
   type ReactMutation,
   type ReactAction,
   type Watch,
+  type PaginatedWatch,
   type WatchQueryOptions,
   type MutationOptions,
   type ConvexReactClientOptions,
