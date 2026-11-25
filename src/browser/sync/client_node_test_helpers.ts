@@ -1,4 +1,4 @@
-import { Base64 } from "../../values/index.js";
+import { Base64, JSONValue } from "../../values/index.js";
 import { Long } from "../../vendor/long.js";
 
 // --experimental-vm-modules which we use for jest doesn't support named exports
@@ -7,7 +7,12 @@ import WebSocket, { WebSocketServer } from "ws";
 // Let's pretend this ws WebSocket is a browser WebSocket (it's very close)
 export const nodeWebSocket = WebSocket as unknown as typeof window.WebSocket;
 
-import { ClientMessage, WireServerMessage } from "./protocol.js";
+import {
+  AddQuery,
+  ClientMessage,
+  Transition,
+  WireServerMessage,
+} from "./protocol.js";
 import {
   PaginatedQueryToken,
   QueryToken,
@@ -197,4 +202,80 @@ export class UpdateQueue {
       this.updates.push(update);
       this.nextIndex++;
     };
+}
+
+type StateModification = Transition["modifications"][number];
+
+/**
+ * Plays the server over a {@link withInMemoryWebSocket} socket: reads the
+ * client's query set changes and sends transitions with matching versions.
+ */
+export function fakeServer({
+  receive,
+  send,
+}: Pick<Parameters<InMemoryWebSocketTest>[0], "receive" | "send">) {
+  let querySet = 0;
+  let sentQuerySet = 0;
+  let ts = 0;
+  return {
+    /** Waits for the client's next query set change and returns its adds. */
+    async added(): Promise<AddQuery[]> {
+      const message = await receive();
+      if (message.type !== "ModifyQuerySet") {
+        throw new Error(`Expected ModifyQuerySet, got ${message.type}`);
+      }
+      querySet = message.newVersion;
+      return message.modifications.filter(
+        (modification): modification is AddQuery => modification.type === "Add",
+      );
+    },
+    transition(...modifications: StateModification[]) {
+      send({
+        type: "Transition",
+        startVersion: {
+          querySet: sentQuerySet,
+          identity: 0,
+          ts: Long.fromNumber(ts),
+        },
+        endVersion: { querySet, identity: 0, ts: Long.fromNumber(++ts) },
+        modifications,
+      });
+      sentQuerySet = querySet;
+    },
+  };
+}
+
+export function queryUpdated(
+  queryId: number,
+  value: JSONValue,
+): StateModification {
+  return { type: "QueryUpdated", queryId, value, logLines: [], journal: null };
+}
+
+export function pageUpdated(
+  queryId: number,
+  rows: string[],
+  split: { splitCursor: string; pageStatus: "SplitRequired" } | null = null,
+): StateModification {
+  return queryUpdated(queryId, {
+    page: rows,
+    isDone: false,
+    continueCursor: "end",
+    splitCursor: split?.splitCursor ?? null,
+    pageStatus: split?.pageStatus ?? null,
+  });
+}
+
+export function queryFailed(
+  queryId: number,
+  errorMessage: string,
+): StateModification {
+  return {
+    type: "QueryFailed",
+    queryId,
+    errorMessage,
+    errorData: null,
+    logLines: [],
+    journal: null,
+  };
 }
